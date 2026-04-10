@@ -1,0 +1,159 @@
+import cv2
+import numpy as np
+import os
+from ultralytics import YOLO
+import time
+import json
+
+class ObjectDetectionCamera:
+    # Default calibration settings
+    DEFAULT_FOCAL_LENGTH = 4.5  # in mm
+    DEFAULT_KNOWN_WIDTH = 4.3   # in cm
+    DEFAULT_KNOWN_DISTANCE = 41.0  # in cm
+
+    CONFIG_FILE = "camera_config.json"  # Configuration file to save settings
+    WEIGHTS_PATH = "runs/detect/train/weights/best.pt"  # Path to the trained YOLO model
+
+    def __init__(self, camera_id=1, 
+                 focal_length=DEFAULT_FOCAL_LENGTH, 
+                 known_width=DEFAULT_KNOWN_WIDTH, 
+                 known_distance=DEFAULT_KNOWN_DISTANCE,
+                 load_config=True):
+        """Initializes the object detection camera and loads the YOLO model."""
+        
+        # Initialize camera
+        self.cap = cv2.VideoCapture(camera_id)
+        if not self.cap.isOpened():
+            raise ValueError("Failed to open camera. Check camera connection.")
+
+        # Load pre-trained YOLO model
+        self.weights_path = self.WEIGHTS_PATH
+        if not os.path.exists(self.weights_path):
+            raise FileNotFoundError(f"Model weights file not found at {self.weights_path}")
+        
+        self.model = YOLO(self.weights_path)
+        if not self.model:
+            raise ValueError("Failed to load YOLO model. Check the weights path.")
+        
+        self.class_names = self.model.names  # Get class names from model
+
+        # Load saved calibration settings
+        if load_config and os.path.exists(self.CONFIG_FILE):
+            self.load_configuration()
+        else:
+            self.focal_length = focal_length
+            self.known_width = known_width
+            self.known_distance = known_distance
+            self.calibrated = True
+            self.reference_class = "default"
+        
+        self.colors = np.random.uniform(0, 255, size=(len(self.class_names), 3))  # Random colors for drawing
+        self.brightness = 0
+        self.contrast = 1.0
+
+        print(f"Camera initialized with calibration settings:")
+        print(f"  - Focal length: {self.focal_length} mm")
+        print(f"  - Reference width: {self.known_width} cm")
+        print(f"  - Reference distance: {self.known_distance} cm")
+
+    def save_configuration(self):
+        """Saves current calibration settings to a JSON file."""
+        config = {
+            "focal_length": self.focal_length,
+            "known_width": self.known_width,
+            "known_distance": self.known_distance,
+            "reference_class": getattr(self, 'reference_class', 'default'),
+            "brightness": self.brightness,
+            "contrast": self.contrast
+        }
+        with open(self.CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=4)
+        print(f"Configuration saved to {self.CONFIG_FILE}")
+
+    def load_configuration(self):
+        """Loads calibration settings from a JSON file."""
+        try:
+            with open(self.CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+            
+            self.focal_length = config.get("focal_length", self.DEFAULT_FOCAL_LENGTH)
+            self.known_width = config.get("known_width", self.DEFAULT_KNOWN_WIDTH)
+            self.known_distance = config.get("known_distance", self.DEFAULT_KNOWN_DISTANCE)
+            self.reference_class = config.get("reference_class", "default")
+            self.brightness = config.get("brightness", 0)
+            self.contrast = config.get("contrast", 1.0)
+            self.calibrated = True
+
+            print(f"Loaded Config - Focal Length: {self.focal_length}, Width: {self.known_width}, Distance: {self.known_distance}")
+
+        except Exception as e:
+            print(f"Error loading configuration: {e}")
+            self.focal_length = self.DEFAULT_FOCAL_LENGTH
+            self.known_width = self.DEFAULT_KNOWN_WIDTH
+            self.known_distance = self.DEFAULT_KNOWN_DISTANCE
+            self.calibrated = True
+            self.reference_class = "default"
+
+    def calculate_size(self, pixel_width):
+        """Calculates the real-world width of an object in cm."""
+        if not self.calibrated:
+            print("Camera not calibrated yet!")
+            return None
+        distance = self.known_distance  # Using fixed distance of 41 cm
+        width_cm = (pixel_width * distance) / self.focal_length
+        return width_cm
+
+    def run(self):
+        """Runs the object detection and displays results with size measurements."""
+        while True:
+            success, img = self.cap.read()  # Capture a frame
+            if not success:
+                print("Failed to read from camera!")
+                break
+
+            # Run YOLO model on the frame
+            results = self.model(img, verbose=False)  # Disable verbose for performance
+
+            for result in results:
+                for box in result.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])  # Bounding box coordinates
+                    class_id = int(box.cls[0])  # Class index
+                    confidence = float(box.conf[0])  # Confidence score
+
+                    # Ensure class_id is valid
+                    if class_id < 0 or class_id >= len(self.class_names):
+                        continue
+                    
+                    class_name = self.class_names[class_id]  # Get class label
+                    color = self.colors[class_id]  # Assign color
+
+                    # Calculate object width in pixels
+                    pixel_width = x2 - x1
+
+                    # Estimate real-world width
+                    width_cm = self.calculate_size(pixel_width)
+
+                    # Draw bounding box and label
+                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                    label = f"{class_name}: {confidence*100:.1f}%"
+                    size_label = f"Size: {width_cm:.2f} cm" if width_cm else "Size: N/A"
+
+                    # Display class name and confidence
+                    cv2.putText(img, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+                    # Display size estimation
+                    cv2.putText(img, size_label, (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # Show processed frame
+            cv2.imshow("Object Detection with Size Estimation", img)
+
+            # Quit on 'q' key press
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+        self.cap.release()  # Release camera
+        cv2.destroyAllWindows()  # Close OpenCV window
+
+if __name__ == "__main__":
+    detector = ObjectDetectionCamera(camera_id=1)
+    detector.run()

@@ -1,0 +1,13 @@
+train: C:\Users\User\Documents\Tugas Amos\VSC\camera_ai\roboflow_dataset/train/images
+val: C:\Users\User\Documents\Tugas Amos\VSC\camera_ai\roboflow_dataset/valid/images
+test: C:\Users\User\Documents\Tugas Amos\VSC\camera_ai\roboflow_dataset/test/images
+
+nc: 8
+names: ['bottle', 'box', 'mouse', 'plc', 'remote', 'ruler', 'small', 'ssd']
+
+roboflow:
+  workspace: moss-k9bkw
+  project: yolov8-training-a5zac
+  version: 2
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/moss-k9bkw/yolov8-training-a5zac/dataset/2
